@@ -1,0 +1,104 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+
+```
+
+
+```{r}
+library(Matrix)
+eachvizdatadir <- basename(list.dirs("data/"))[-1]
+
+proteincodingList<-read.table("/Users/Brian/Stanford/Stanford/Research/Lymphoma/ecotyper/ecotyper-master/utils/protein_coding_genes.txt",header = T)
+
+sig_lm23 = read.delim(file.path("/Users/Brian/Stanford/Stanford/Research/Lymphoma/cybersort/scRNA_Seq/032023_oldrun/cHL_Sig_Matrix_032123.txt"))
+
+for (eachvizdata in eachvizdatadir ) {
+  id = eachvizdata
+  matrix_dir = paste0("data/", id)
+  
+  barcode.path = file.path(matrix_dir, "barcodes.tsv.gz")
+  features.path = file.path(matrix_dir, "features.tsv.gz")
+  matrix.path = file.path(matrix_dir, "matrix.mtx.gz")
+  positions.path = file.path(matrix_dir, "tissue_positions_list.csv")
+  
+
+  if(!file.exists(barcode.path))
+  {
+    stop(paste0("File 'barcodes.tsv.gz' is missing from the input dir '", matrix_dir, "'"))
+  }
+  if(!file.exists(features.path))
+  {
+    stop(paste0("File 'features.tsv.gz' is missing from the input dir '", matrix_dir, "'"))
+  }
+  if(!file.exists(matrix.path))
+  {
+    stop(paste0("File 'matrix.mtx.gz' is missing from the input dir '", matrix_dir, "'"))
+  }
+  if(!file.exists(positions.path))
+  {
+    stop(paste0("File 'tissue_positions_list.csv' is missing from the input dir '", matrix_dir, "'"))
+  }
+
+  
+  mat <- readMM(file = matrix.path)
+  feature.names = read.delim(features.path,
+                             header = FALSE,
+                             stringsAsFactors = FALSE)
+  barcode.names = read.delim(barcode.path,
+                             header = FALSE,
+                             stringsAsFactors = FALSE)
+  
+  colnames(mat) = barcode.names$V1
+  rownames(mat) = feature.names$V1
+  
+  data = as.matrix(mat)
+  data = data.frame(Gene = feature.names[match(rownames(data), feature.names$V1),]$V2, data)
+  data = data[!duplicated(data$Gene),]
+  
+  spatial_coords = read.delim(positions.path, sep = ",", header = F)
+  spatial_coords$ID = paste0(make.names(spatial_coords[,1]))
+  
+  spatial_coords = spatial_coords[match(colnames(data)[-1], make.names(spatial_coords[,1])),]
+  
+  colnames(data)[-1] = spatial_coords$ID
+  
+  #now make the cibersortx files for run and then the new matrices 
+  library(stringr)
+  test <- data
+  colnames(test) <- word(colnames(data), 1, sep = "\\.")
+  colnames(test)[1] <- "gene"
+  
+  
+  small_data_lm23 = test[test[,1] %in% sig_lm23[,1], ]
+  
+  # Filter columns with total expression > 0
+  data_test_lm23 = test[ ,c(TRUE, apply(small_data_lm23[,-1], 2, function(x) sum(x > 0) > 0))]
+
+  
+  #new matrix
+  newpath = paste0("data/", id, "_min1sig")
+  dir.create(newpath)
+  mat_sub <- mat[ , colnames(mat) %in% paste0(colnames(data_test_lm23), "-1") ] 
+  colnames(mat_sub) <- gsub("-", "\\.", colnames(mat_sub) )
+  writeMM(mat_sub, paste0(newpath, "/matrix.mtx"))
+  system( paste0("gzip ", newpath, "/matrix.mtx") )
+  #barcodes
+  barcode.names_sub <- barcode.names[ barcode.names$V1 %in% paste0(colnames(data_test_lm23), "-1") , ] 
+  barcode.names_sub <- gsub("-", "\\.",barcode.names_sub )
+  write.table(barcode.names_sub, paste0(newpath, "/barcodes.tsv"), sep = "\t", quote = F, col.names = F, row.names = F)
+  system( paste0("gzip ", newpath, "/barcodes.tsv") )
+  #features - do not have to do this one as it is just gene names which we do not remove
+  #lets skip to tissue positions 
+  tissuepositionsinloop = read.csv(positions.path)
+  tissuepositionsinloop_sub <- tissuepositionsinloop[ tissuepositionsinloop$barcode %in% paste0(colnames(data_test_lm23), "-1") , ] 
+  tissuepositionsinloop_sub$barcode <- gsub("-", "\\.", tissuepositionsinloop_sub$barcode )
+  write.table(tissuepositionsinloop_sub, paste0(newpath, "/tissue_positions_list.csv"), sep = ",", quote = F, col.names = T, row.names = F)
+  #now features
+  cpcommand = paste0("cp ", "/data1/ajay/Ecotyper_Lymphoma_NLPHL/visium_files/Ecotyper_Export/", id, "/features.tsv.gz ",  newpath, "/features.tsv.gz")
+  system( cpcommand )
+}
+```
+
